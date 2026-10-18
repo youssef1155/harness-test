@@ -1,41 +1,134 @@
 pipeline:
-  name: Build Test and Deploy to Render
-  identifier: Build_Test_and_Deploy_to_Render
-  projectIdentifier: default_project
-  orgIdentifier: default
+  id: FullStack_Build_Test_Deploy_Render
+  name: FullStack Build Test and Deploy with Rollback
+  description: Multi-stage pipeline for Frontend & Backend with automated health verification and rollback.
+  tags:
+    ai_generated: ""
+  clone:
+    enabled: true
+    connector: harness_test_github
+    repo: youssef1155/harness-test
+    ref:
+      type: branch
+      name: main
   stages:
-    - stage:
-        name: Build and Deploy
-        identifier: Build_and_Deploy
-        type: CI
-        spec:
-          cloneCodebase: true
-          platform:
-            os: Linux
-            arch: Amd64
-          runtime:
-            type: Cloud
-            spec: {}
-          execution:
-            steps:
-              - step:
-                  type: Run
-                  name: Run Unit Tests
-                  identifier: Run_Unit_Tests
-                  spec:
-                    shell: Sh
-                    image: node:20-alpine
-                    command: |
-                      echo "Starting automated tests..."
-                      npm test
-              - step:
-                  type: Run
-                  name: Trigger Render Deployment
-                  identifier: Trigger_Render_Deployment
-                  spec:
-                    shell: Sh
-                    image: curlimages/curl:latest
-                    command: |
-                      echo "Triggering Render Deploy Hook..."
-                      curl -f -X POST "<+secrets.getValue("render_deploy_hook")>"
-                      echo "Render deployment triggered successfully!"
+    # =====================================================
+    # NODE 1: INIT, BUILD & UNIT TESTS
+    # =====================================================
+    - id: Init_Build_and_Test
+      name: 1. Init Build and Test
+      runtime: cloud
+      platform:
+        os: linux
+        arch: amd64
+      steps:
+        - id: Init_Workspace
+          name: Initialize Environment
+          run:
+            container:
+              image: alpine:latest
+            script: |
+              echo "Initializing workspace..."
+              ls -la
+              echo "Commit SHA: $DRONE_COMMIT_SHA"
+        - id: Test_Backend
+          name: Build and Test Backend
+          run-test:
+            container:
+              image: node:20-alpine
+            script: |
+              echo "Testing Backend Service..."
+              cd backend
+              npm test
+            intelligence:
+              disabled: true
+        - id: Test_Frontend
+          name: Build and Test Frontend
+          run-test:
+            container:
+              image: node:20-alpine
+            script: |
+              echo "Testing Frontend Service..."
+              cd frontend
+              npm test
+            intelligence:
+              disabled: true
+
+    # =====================================================
+    # NODE 2: DEPLOY BACKEND + HEALTH CHECK + ROLLBACK
+    # =====================================================
+    - id: Deploy_Backend_Stage
+      name: 2. Deploy Backend
+      runtime: cloud
+      platform:
+        os: linux
+        arch: amd64
+      steps:
+        - id: Trigger_Backend_Deploy
+          name: Trigger Backend Render Hook
+          run:
+            container:
+              image: curlimages/curl:latest
+            script: |
+              echo "Deploying Backend to Render..."
+              curl -f -X POST "${{ secrets.getValue("render_backend_hook") }}"
+        - id: Verify_Backend_Health
+          name: Verify Backend Health (Smoke Test)
+          run:
+            container:
+              image: curlimages/curl:latest
+            script: |
+              echo "Waiting 25s for Render container to spin up..."
+              sleep 25
+              echo "Checking Backend /health endpoint..."
+              curl -f --retry 3 --retry-delay 5 https://harness-test.onrender.com/health
+        - id: Rollback_Backend_On_Failure
+          name: Rollback Backend to Previous Version
+          if: ${{ failure() }}
+          run:
+            container:
+              image: curlimages/curl:latest
+            script: |
+              echo "🚨 Backend Deployment or Health Check FAILED!"
+              echo "Initiating automatic rollback to previous stable commit..."
+              curl -f -X POST "${{ secrets.getValue("render_backend_rollback_hook") }}"
+              echo "✅ Rollback triggered on Render."
+
+    # =====================================================
+    # NODE 3: DEPLOY FRONTEND + HEALTH CHECK + ROLLBACK
+    # =====================================================
+    - id: Deploy_Frontend_Stage
+      name: 3. Deploy Frontend
+      runtime: cloud
+      platform:
+        os: linux
+        arch: amd64
+      steps:
+        - id: Trigger_Frontend_Deploy
+          name: Trigger Frontend Render Hook
+          run:
+            container:
+              image: curlimages/curl:latest
+            script: |
+              echo "Deploying Frontend to Render..."
+              curl -f -X POST "${{ secrets.getValue("render_frontend_hook") }}"
+        - id: Verify_Frontend_Health
+          name: Verify Frontend Health (Smoke Test)
+          run:
+            container:
+              image: curlimages/curl:latest
+            script: |
+              echo "Waiting 25s for Frontend container to spin up..."
+              sleep 25
+              echo "Checking Frontend /health endpoint..."
+              curl -f --retry 3 --retry-delay 5 https://harness-frontend.onrender.com/health
+        - id: Rollback_Frontend_On_Failure
+          name: Rollback Frontend to Previous Version
+          if: ${{ failure() }}
+          run:
+            container:
+              image: curlimages/curl:latest
+            script: |
+              echo "🚨 Frontend Health Check FAILED! Rolling back to previous stable deployment..."
+              curl -f -X POST "${{ secrets.getValue("render_frontend_rollback_hook") }}"
+              echo "✅ Frontend Rollback triggered."
