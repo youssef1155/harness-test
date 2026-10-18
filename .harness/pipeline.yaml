@@ -1,0 +1,41 @@
+pipeline:
+  name: Build Test and Deploy to Render
+  identifier: Build_Test_and_Deploy_to_Render
+  projectIdentifier: default_project
+  orgIdentifier: default
+  stages:
+    - stage:
+        name: Build and Deploy
+        identifier: Build_and_Deploy
+        type: CI
+        spec:
+          cloneCodebase: true
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Run Unit Tests
+                  identifier: Run_Unit_Tests
+                  spec:
+                    shell: Sh
+                    image: node:20-alpine
+                    command: |
+                      echo "Starting automated tests..."
+                      npm test
+              - step:
+                  type: Run
+                  name: Trigger Render Deployment
+                  identifier: Trigger_Render_Deployment
+                  spec:
+                    shell: Sh
+                    image: curlimages/curl:latest
+                    command: |
+                      echo "Triggering Render Deploy Hook..."
+                      curl -f -X POST "<+secrets.getValue("render_deploy_hook")>"
+                      echo "Render deployment triggered successfully!"

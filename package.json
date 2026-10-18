@@ -1,0 +1,10 @@
+{
+  "name": "harness-render-demo",
+  "version": "1.0.0",
+  "description": "Demo app for Harness CI/CD and Render",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "test": "node test.js"
+  }
+}
